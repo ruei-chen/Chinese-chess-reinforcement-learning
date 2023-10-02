@@ -32,8 +32,10 @@ class Buffer:
 class QNetwork(nn.Module):
     def __init__(self, state_size, action_size, hidden_size):
         super(QNetwork, self).__init__()
-        self.fc1 = nn.Linear(state_size, 256)
-        self.fc2 = nn.Linear(256, hidden_size)
+        self.fc1 = nn.Linear(state_size, 512)
+        self.fc7 = nn.Linear(512, 1024)
+        self.fc8 = nn.Linear(1024, 386)
+        self.fc2 = nn.Linear(386, hidden_size)
         
         self.value_stream = nn.Sequential(
             nn.Linear(hidden_size, 128),
@@ -42,27 +44,32 @@ class QNetwork(nn.Module):
         )
         
         self.advantage_stream = nn.Sequential(
-            nn.Linear(hidden_size, 240),
+            nn.Linear(hidden_size, 586),
             nn.ReLU(),
-            nn.Linear(240, hidden_size)
+            nn.Linear(586, 1536)
         )
 
-        self.fc3 = nn.Linear(hidden_size, 212)
+        self.fc3 = nn.Linear(1536, 987)
         self.fc4 = nn.Sequential(
-            nn.Linear(212, 152),
+            nn.Linear(987, 1024),
             nn.LeakyReLU(negative_slope=0.01),  # 使用Leaky ReLU函数，斜率为0.01
-            nn.Linear(152, 152)
+            nn.Linear(1024, 854)
         )
-        self.fc5 = nn.Linear(152, action_size)
+        self.fc5 = nn.Linear(854, 625)
+        self.fc6 = nn.Linear(625, action_size)
+
     
     def forward(self, state):
         x = F.relu(self.fc1(state))
+        x = F.elu(self.fc7(x))
+        x = F.elu(self.fc8(x))
         x = F.elu(self.fc2(x))
         state_value = self.value_stream(x)
         advantage = self.advantage_stream(x)
         advantage = F.relu(self.fc3(advantage))
         advantage = self.fc4(advantage)
-        advantage = F.relu(self.fc5(advantage))
+        advantage = F.elu(self.fc5(advantage))
+        advantage = F.relu(self.fc6(advantage))
         if len(advantage.shape) == 2:
             advantage_mean = advantage.mean(dim=1, keepdim=True)
         if len(advantage.shape) == 1:
@@ -89,10 +96,11 @@ class DQN:
         self.target_network.load_state_dict(self.q_network.state_dict())
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=learning_rate, weight_decay=0.0002)
         self.scheduler = StepLR(self.optimizer, step_size=70, gamma=self.gamma)
+        self.loss_values = []  # 初始化损失值列表
         # 進行正規化
     
     def select_action(self, state, valid_actions):
-        print(self.epsilon, "epsilon")
+        # print(self.epsilon, "epsilon")
         if random.uniform(0, 1) > self.epsilon:
             with torch.no_grad():
                 state_tensor = torch.FloatTensor(state)
@@ -108,6 +116,9 @@ class DQN:
     
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
+
+    def returnloss(self):
+        return self.loss_values
     
     def replay(self, batch_size):
         if len(self.memory) < batch_size:
@@ -147,6 +158,8 @@ class DQN:
         target_q_values = rewards_tensor + self.gamma * next_q_values * (1 - dones_tensor)
         
         loss = nn.MSELoss()(current_q_values, target_q_values.unsqueeze(1))
+
+        self.loss_values.append(loss.item())
         
         self.optimizer.zero_grad()
         loss.backward()
@@ -159,6 +172,9 @@ class DQN:
         
     def update_target_network(self):
         self.target_network.load_state_dict(self.q_network.state_dict())
+
+    def delloss(self):
+        self.loss_values = []
 
 # Define a function to preprocess the state
 def preprocess_state(chess):
@@ -570,17 +586,17 @@ def main():
     epsilon_decay = 0.99
     batch_size = 25
     episodes = 100000
-    max_steps = 800
+    max_steps = 600
     save_interval = 10  # 設定保存模型的間隔
 
 
     dqn_agent = DQN(state_size, action_size, hidden_size, learning_rate, gamma, epsilon_decay)
 
     # 載入已經儲存的模型狀態
-    saved_model_path = 'DQNmodel.pth'
-    checkpoint = torch.load(saved_model_path)
-    dqn_agent.q_network.load_state_dict(checkpoint['model_state_dict'])
-    dqn_agent.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    # saved_model_path = 'DQNmodel.pth'
+    # checkpoint = torch.load(saved_model_path)
+    # dqn_agent.q_network.load_state_dict(checkpoint['model_state_dict'])
+    # dqn_agent.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     
     for episode in range(episodes):
         # 創建 Chessboard 實例
@@ -606,12 +622,12 @@ def main():
 
             valid_moves = combine(valid_moves, marking)
             valid_actions, str_poses, end_poses = validaction(valid_moves, chess)
-            print(valid_actions)
+            # print(valid_actions)
 
             actions = dqn_agent.select_action(state, valid_actions)
-            print(actions)
+            # print(actions)
             origin, action = get_move(actions, str_poses, end_poses, valid_actions)
-            print(origin,action)
+            # print(origin,action)
 
             # 執行遊戲行動，並取得下一個遊戲狀態、獎勵和結束標誌
             reward, done, marking = nextstate(action, origin, chess, marking, temp) 
@@ -633,7 +649,9 @@ def main():
             if len(dqn_agent.memory) > batch_size:
                 dqn_agent.replay(batch_size)
         
+        loss_values = dqn_agent.returnloss()
         print(f"Episode {episode + 1} - Total Reward: {total_reward:.2f}")
+        print(f"Episode {episode + 1}, Loss: {np.mean(loss_values)}")
         if total_reward > -25 or step > 250:
             dqn_agent.update_target_network()
 
@@ -641,11 +659,14 @@ def main():
             torch.save({
                 'model_state_dict': dqn_agent.q_network.state_dict(),
                 'optimizer_state_dict': dqn_agent.optimizer.state_dict(),
-            }, f'DQNmodel.pth')
+            }, f'DQNorimodel.pth')
 
         # 保存每個 episode 的訓練結果（總獎勵）
-        with open('training_results.txt', 'a') as f:
+        with open('training_results_ori.txt', 'a') as f:
             f.write(f"Episode {episode + 1} - Total Reward: {total_reward:.2f}\n")
+            f.write(f"Episode {episode + 1} - loss: {np.mean(loss_values):.2f}\n")
+
+        dqn_agent.delloss()
 
 if __name__ == "__main__":
     main()

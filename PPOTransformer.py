@@ -86,27 +86,33 @@ class PolicyNetwork(nn.Module):
         self.transformer_blocks = nn.ModuleList([   # 构建一个具有多个层级的 Transformer 架构，以捕获不同层次的特征
             TransformerBlock(feature_dim, hidden_size, num_heads, 0.1) for _ in range(num_transformer_blocks)
         ])
-        self.fc1 = nn.Linear(state_dim, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, hidden_size)
-        self.fc4 = nn.Linear(hidden_size, hidden_size)
-        self.fc5 = nn.Linear(hidden_size, action_dim)
+        self.fc1 = nn.Linear(state_dim, 2260)
+        self.fc2 = nn.Linear(2260, 4058)
+        self.fc8 = nn.Linear(4058, 3192)
+        self.fc3 = nn.Linear(3192, 1832)
+        self.fc4 = nn.Linear(1832, 1024)
+        self.fc5 = nn.Linear(1024, hidden_size)
+        self.fc6 = nn.Linear(hidden_size, hidden_size)
+        self.fc7 = nn.Linear(hidden_size, 352)
+        self.fc9 = nn.Linear(352, action_dim)
 
     def forward(self, state):
         for transformer_block in self.transformer_blocks:
             x = transformer_block(state)    # 输出 x 可以视为经过多次变换后的数据表示，具有更强的表征能力
             
-        print(x)
         if len(x.shape) == 3:
             x = x.view(x.shape[0], -1)
         else:
             x = x.view(-1)
-        print(x)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
+        x = F.relu(self.fc8(x))
         x = F.relu(self.fc3(x))
         x = F.relu(self.fc4(x))
-        action_probs = F.softmax(self.fc5(x), dim=-1)
+        x = F.relu(self.fc5(x))
+        x = F.relu(self.fc6(x))
+        x = F.relu(self.fc7(x))
+        action_probs = F.softmax(self.fc9(x), dim=-1)
         return action_probs
 
 class ValueNetwork(nn.Module):
@@ -115,9 +121,10 @@ class ValueNetwork(nn.Module):
         self.transformer_blocks = nn.ModuleList([   # 构建一个具有多个层级的 Transformer 架构，以捕获不同层次的特征
             TransformerBlock(feature_dim, hidden_size, num_heads, 0.1) for _ in range(num_transformer_blocks)
         ])
-        self.fc1 = nn.Linear(state_dim, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, 1)
+        self.fc1 = nn.Linear(state_dim, 1260)
+        self.fc2 = nn.Linear(1260, 512)
+        self.fc3 = nn.Linear(512, 208)
+        self.fc4 = nn.Linear(208, 1)
         self.relu = nn.ReLU(inplace=False)
 
     def forward(self, state):
@@ -128,7 +135,8 @@ class ValueNetwork(nn.Module):
         
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
-        state_value = self.fc3(x)
+        x = self.relu(self.fc3(x))
+        state_value = self.fc4(x)
         return state_value
 
 # Define a function to preprocess the state
@@ -200,6 +208,7 @@ def nextstate(action_str, ori_position, chess, temp, selected_indexes):
     best_reward = None
     best_action = None
     ori = None
+    best_indexes = None
     done = None
 
     for index, value in enumerate(ori_position):
@@ -271,6 +280,7 @@ def evaluate_state(chess , color, temp, action, x, y):
     # print(restchess[0][1], restchess[0][0])
 
     thischess = chess.value(chessx , chessy)
+
 
     if thischess.name == "士":
         dicount = 0.96
@@ -381,6 +391,10 @@ def evaluate_state(chess , color, temp, action, x, y):
         if len(c) > 3:
             if c[0].red != c[2].red:
                 value = value + 0.03
+        if chessx != 0 and chessx != 8:
+            if chess.chessboard[chessx-1][chessy] != 0 and chess.chessboard[chessx+1][chessy] != 0:
+                value = value - 0.025
+
     if thischess.name == "兵":
         dicount = 0.57
 
@@ -440,110 +454,157 @@ def justmove(end_pos, chess, temparr):
             pastmove[0] = (temp.name, temp.position(), temp.red)
     return pastmove
 
+def mark(chess):
+    marking = []
+    index = 1
+    for i in chess.chessboard:
+        for j in i:
+            if j == 0: continue
+            x,y = j.position()
+            if y == 3 or y == 6:
+                index = 1 + x // 2
+            if y == 0 or y == 9:
+                if x < 4:
+                    index = 1
+                if x > 4:
+                    index = 2
+            marking.append((index,(j.red),(j.name),(j.position())))
+
+    return marking
+
+def combine(valid_moves, marking):
+    all_moves = list(valid_moves.keys())
+
+    for marks in marking:
+        for move in all_moves:
+            if marks[3] == move[1]:
+                valid_moves[(move[0],move[1],marks[0],marks[2])] = valid_moves[move]
+                del valid_moves[move]
+
+    return valid_moves
 
 # Define a function to convert action probabilities to chess moves
-def convert_action(action_probs, chess):
+def convert_action(action_probs, chess, marking):
     valid_moves = chess.get_valid_moves()
     # print(valid_moves)
     action_prob = action_probs.detach().numpy()
+    all_moves = []
+    if len(valid_moves) > 0:
+        valid_moves = combine(valid_moves, marking)
 
-    all_moves = list(valid_moves.keys())
-    done = False
+        all_moves = list(valid_moves.keys())
+        done = False
 
-    all_probs = []
-    all_positions = []
-    possible_move = []
-    indexes = []
+        all_probs = []
+        all_positions = []
+        possible_move = []
+        indexes = []
+        # print(all_moves)
 
 
-    # 車90 馬90 象7 士5 帥9 炮90 兵55  346*2
-    for move in all_moves:
-        color, position = move
-        x,y = position
-        for (posx,posy) in valid_moves[move]:
-            value = chess.value(x,y)
-            # Convert color and position to the 1D index
-            if color == -1:
-                if value.name == '車':
-                    index = posx * 10 + posy
-                if value.name == '馬':
-                    index = posx * 10 + posy + 90
-                if value.name == '炮':
-                    index = posx * 10 + posy + 180
-                if value.name == '兵':
-                    if posy < 5:
-                        index = 270 + posx + (4 - posy)
-                    if posy > 4:
-                        index = 280 + posx * 5 + (9 - posy)
-                if value.name == '帥':
-                    index = 325 + (posx - 3) * 3 + posy
-                if value.name == '士':
-                    if posy != 1:
-                        index = 334 + (posx - 3) + posy // 2
+        # 車90 馬90 象7 士5 帥9 炮90 兵55  346*2
+        for move in all_moves:
+            x, y = move[1]
+            name = move[3]
+            for (posx,posy) in valid_moves[move]:
+                # print(posx,posy,"pos")
+                movingx, movingy = (posx - x,posy - y)
+                if name == '車':   # 0 - 67
+                    if abs(movingx) == 0:
+                        index = movingy + 9
+                        if movingy > 0:
+                            index = index - 1
+                    if abs(movingy) == 0:
+                        index = movingx + 8 + 18
+                        if movingx > 0:
+                            index = index - 1
+                    if move[2] == 2:
+                        index = index + 34
+                if name == '炮':   # 68 - 135
+                    if abs(movingx) == 0:
+                        index = movingy + 9 + 68
+                        if movingy > 0:
+                            index = index - 1
+                    if abs(movingy) == 0:
+                        index = movingx + 8 + 18 + 68
+                        if movingx > 0:
+                            index = index - 1
+                    if move[2] == 2:
+                        index = index + 34
+                if name == '象':   # 136 - 143
+                    if movingx == 2:
+                        index = 137 + (movingy // 2)
+                    if movingx == -2:
+                        index = 138 + (movingy // 2)
+                    if move[2] == 2:
+                        index = index + 4
+                if name == '士':   # 144 - 151
+                    if movingx == 1:
+                        index = 145 + movingy
+                    if movingx == -1:
+                        index = 146 + movingy
+                    if move[2] == 2:
+                        index = index + 4
+                if name == '帥':   # 152 - 155
+                    if movingx == 0:
+                        index = 153 + movingy
+                    if movingy == 0:
+                        index = 154 + movingx
+                if name == '兵':   # 156 - 170
+                    if movingy == 0:
+                        index = 157 + movingx
                     else:
-                        index = 338 
-                if value.name == '象':
-                    if posy == 2:
-                        index = 339 + posx // 4
-                    else:
-                        index = 342 + (posx - 2) // 2 + posy // 4
-            if color == 1:
-                if value.name == '車':
-                    index = posx * 10 + posy + 346
-                if value.name == '馬':
-                    index = posx * 10 + posy + 436
-                if value.name == '炮':
-                    index = posx * 10 + posy + 526
-                if value.name == '兵':
-                    if posy > 4:
-                        index = 616 + posx + (posy - 5)
-                    if posy < 5:
-                        index = 626 + posx * 5 + posy
-                if value.name == '帥':
-                    index = 671 + (posx - 3) * 3 + (posy - 7)
-                if value.name == '士':
-                    if posy != 8:
-                        index = 680 + (posx - 3) + (posy - 7) // 2
-                    else:
-                        index = 684
-                if value.name == '象':
-                    if posy == 7:
-                        index = 685 + posx // 4
-                    else:
-                        index = 688 + (posx - 2) // 2 + (posy - 5) // 4
-            prob = action_prob[index]
-            indexes.append(index)
-            all_probs.append(prob)
-            all_positions.append(move)
-            possible_move.append((posx,posy))
+                        index = 157
+                    index = index + (move[2] - 1) * 3
+                if name == '馬':   # 171 - 186
+                    if abs(movingx) == 1:
+                        index = (movingx + movingy + 3) // 2 + 171
+                    if abs(movingx) == 2:
+                        index = (movingx + movingy + 3) // 2 + 175
+                    if move[2] == 2:
+                        index = index + 8
+                # valid_actions.append(value)
+                # str_pos.append(move[1])
+                # end_pos.append((posx,posy))
+                prob = action_prob[index]
+                indexes.append(index)
+                all_probs.append(prob)
+                all_positions.append((move[0],move[1]))
+                possible_move.append((posx,posy))
 
-    # print(all_probs)
-    # print(all_positions)
-    # print(possible_move)
+        # print(all_positions)
+        # print(possible_move)
 
-    all_probs_tensor = torch.tensor(all_probs, dtype=torch.float32)
-    # print(all_probs_tensor)
+        all_probs_tensor = torch.tensor(all_probs, dtype=torch.float32)
+        # print(all_probs_tensor)
 
-    if all_probs_tensor.numel() > 0 and torch.any(all_probs_tensor > 0):
-        # Normalize the probabilities
-        all_probs_tensor = all_probs_tensor / torch.sum(all_probs_tensor)
+        if len(all_probs_tensor) > 0 and torch.all(all_probs_tensor == 0):
+            selected_index = torch.randint(0, len(all_probs_tensor), (3,))
+            selected_position = [all_positions[idx.item()] for idx in selected_index]
+            selected_move = [possible_move[idx.item()] for idx in selected_index]
+            selected_indexes = [indexes[idx.item()] for idx in selected_index]
 
-        # Sample an action based on the probabilities
-        if len(all_probs_tensor) > 5:
-            selected_index = torch.multinomial(all_probs_tensor, 3)
-        elif len(all_probs_tensor) > 3:
-            selected_index = torch.multinomial(all_probs_tensor, 2)
-        else:
-            selected_index = torch.multinomial(all_probs_tensor, 1)
-        selected_position = [all_positions[idx.item()] for idx in selected_index]
-        selected_move = [possible_move[idx.item()] for idx in selected_index]
-        selected_indexes = [indexes[idx.item()] for idx in selected_index]
+
+        if (all_probs_tensor.numel() > 0 and torch.any(all_probs_tensor > 0)):
+            # Normalize the probabilities
+            all_probs_tensor = all_probs_tensor / torch.sum(all_probs_tensor)
+
+            # Sample an action based on the probabilities
+            if len(all_probs_tensor) > 5:
+                selected_index = torch.multinomial(all_probs_tensor, 3)
+            elif len(all_probs_tensor) > 3:
+                selected_index = torch.multinomial(all_probs_tensor, 2)
+            else:
+                selected_index = torch.multinomial(all_probs_tensor, 1)
+            selected_position = [all_positions[idx.item()] for idx in selected_index]
+            selected_move = [possible_move[idx.item()] for idx in selected_index]
+            selected_indexes = [indexes[idx.item()] for idx in selected_index]
         # for i in range(len(all_moves)):
         #     if len(valid_moves[selected_position]) > 0:
         #         break
         #     selected_position = all_moves[i]
         #     selected_move = valid_moves[selected_position]
-    else:
+    # else:
         # selected_position = random.choice(all_moves)
         # selected_move = valid_moves[selected_position]
         # for i in range(len(all_moves)):
@@ -551,14 +612,27 @@ def convert_action(action_probs, chess):
         #     selected_move = valid_moves[selected_position]
         #     if len(valid_moves[selected_position]) > 0:
         #         break
-        if len(all_moves) ==0:
-            selected_move = []
-            selected_position = []
-            selected_indexes = []
-            done = True
-
-    # print(selected_move,selected_position)
+    if len(all_moves) ==0:
+        selected_move = []
+        selected_position = []
+        selected_indexes = []
+        done = True
+    # print(selected_index,"selected_index")
+    # print(selected_indexes,"selected_indexes")
+    # print(selected_move,"selected_move")
+    # print(selected_position,"selected_position")
+    
     return selected_move, selected_position, done, selected_indexes
+
+def markingupdate(action, origin, marks):
+    marking = []
+    for mark in marks:
+        if mark[3] == origin:
+            marking.append((mark[0],mark[1],mark[2],action))
+        elif mark[3] != action:
+            marking.append(mark)
+
+    return marking
 
 def ppo_train(env, policy_net, value_net, num_episodes, max_steps, epsilon, gamma, lamda, epochs, batch_size):
     win = 0
@@ -577,7 +651,10 @@ def ppo_train(env, policy_net, value_net, num_episodes, max_steps, epsilon, gamm
         masks = []
         next_value = []
         temp = []
+        policyloss = []
+        valueloss = []
         buffer = Buffer()
+        marking = mark(chessboard)
         entropy = 0
 
         for step in range(max_steps):
@@ -587,7 +664,7 @@ def ppo_train(env, policy_net, value_net, num_episodes, max_steps, epsilon, gamm
             # print(action_dist)
             # action = action_dist.sample()
             # print(action,"action")
-            action_str, ori_position, done, selected_indexes = convert_action(action_probs, chessboard)
+            action_str, ori_position, done, selected_indexes = convert_action(action_probs, chessboard, marking)
             # print (action_str , ori_position , "辨識")
             if done:
                 # buffer.add(state, action, reward, next_state, done)
@@ -606,6 +683,7 @@ def ppo_train(env, policy_net, value_net, num_episodes, max_steps, epsilon, gamm
             action = torch.tensor(action)
             # print(action)
             chessboard.move(ori, actions)
+            marking = markingupdate(actions, ori, marking)
             temp = justmove(actions, chessboard, temp)
             # print(ori,actions)
 
@@ -638,8 +716,8 @@ def ppo_train(env, policy_net, value_net, num_episodes, max_steps, epsilon, gamm
         # next_value = value_net(next_state_tensor).detach()
         # print(next_value)
 
-        returns = calculate_returns(rewards, next_value, masks, gamma, lamda)
-        advantages = calculate_advantages(rewards, values, next_value, masks, gamma, lamda)
+        returns = calculate_returns(rewards, gamma)
+        advantages = calculate_advantages(rewards, values, next_value, gamma)
 
         # 將 log_probs 轉換成 PyTorch 張量
         log_probs = torch.tensor(log_probs, dtype=torch.float32)
@@ -674,10 +752,12 @@ def ppo_train(env, policy_net, value_net, num_episodes, max_steps, epsilon, gamm
             surrogate1 = ratio * advantages
             surrogate2 = torch.clamp(ratio, 1 - epsilon, 1 + epsilon) * advantages
             policy_loss = -torch.min(surrogate1, surrogate2).mean()
+            policyloss.append(policy_loss)
 
             value_copy =  values.clone().detach()
             value_copy.requires_grad = True  # 確保 value_copy 需要計算梯度
             value_loss = F.mse_loss(value_copy, return_clone)
+            valueloss.append(value_loss)
             print("haahhahahahahahahaaaaaaaaaahhhahahahhahaha")
 
             entropy_loss = -entropymean
@@ -694,37 +774,39 @@ def ppo_train(env, policy_net, value_net, num_episodes, max_steps, epsilon, gamm
         total_reward = sum(rewards)
         avg_reward = total_reward / len(rewards)
         print(f"Episode {episode + 1} - Total Reward: {total_reward}, Average Reward: {avg_reward}")
+        print(f"Episode {episode + 1} - policy loss: {torch.mean(torch.stack(policyloss)).item():.2f}, value loss: {torch.mean(torch.stack(valueloss)).item():.2f}")
         # 保存模型參數
         torch.save(policy_net.state_dict(), "ppo_training_results/policy_Transformer_net.pth")
         torch.save(value_net.state_dict(), "ppo_training_results/value_Transformer_net.pth")
+
+        with open('ppo_training_results/training_results.txt', 'a') as f:
+            f.write(f"Episode {episode + 1} - policy loss: {torch.mean(torch.stack(policyloss)).item():.2f}, value loss: {torch.mean(torch.stack(valueloss)).item():.2f}\n")
 
     print("win time : ", win)
 
     return policy_net, value_net
 
-def calculate_returns(rewards, next_value, masks, gamma, lamda):
+def calculate_returns(rewards, gamma):
     returns = []
+    R = 0
     for step in reversed(range(len(rewards))):
-        temp = next_value[step]
-        next_state_tensor = temp.clone().detach()
-        next_state_tensor = next_state_tensor.to(torch.float32)  # Ensure the data type is float32 (if needed)
-        next_values = value_net(next_state_tensor).detach()
-        R = next_values
-        R = rewards[step] + gamma * R * masks[step]
+        R = R * gamma + rewards[step] 
         returns.insert(0, R)
     return torch.tensor(returns, dtype=torch.float32)
 
-def calculate_advantages(rewards, values, next_value, masks, gamma, lamda):
+def calculate_advantages(rewards, values, next_state, gamma):
     advantages = []
-    for step in reversed(range(len(rewards)-1)):
-        temp = next_value[step]
-        next_state_tensor = temp.clone().detach()
-        next_state_tensor = next_state_tensor.to(torch.float32)  # Ensure the data type is float32 (if needed)
-        next_values = value_net(next_state_tensor).detach()
-        R = next_values
-        delta = rewards[step] + gamma * values[step + 1] * masks[step] - values[step]
-        R = delta + gamma * lamda * R * masks[step]
-        advantages.append(R)
+    R = 0
+    for step in reversed(range(len(rewards))):
+        if step == len(rewards):
+            next_values = 0
+        else:
+            next_state_tensor = next_state[step].clone().detach()
+            next_state_tensor = next_state_tensor.to(torch.float32)  # Ensure the data type is float32 (if needed)
+            next_values = value_net(next_state_tensor).detach()
+        R = R * gamma + rewards[step] 
+        delta = R - values[step] + gamma * next_values
+        advantages.insert(0, delta)
     advantages = torch.tensor(advantages, dtype=torch.float32)
     return advantages
 
@@ -734,14 +816,14 @@ if __name__ == "__main__":
     
     state_dim = 90*4  # 棋盘狀態的维度
     feature_dim = 4   # 棋盘特徵的维度
-    action_dim = 692  # 象棋的动作维度，假设有692个合法动作
-    hidden_size = 128
+    action_dim = 187  # 象棋的动作维度，假设有187个合法动作
+    hidden_size = 512
     num_episodes = 100000  # 训练的episode数
     max_steps = 400  # 每个episode的最大步数
     epsilon = 0.2  # PPO算法的超参数，用于clip surrogate函数
     gamma = 0.99  # 折扣因子
     lamda = 0.95  # GAE-Lambda参数
-    epochs = 10  # 每个更新步骤中PPO的循环次数
+    epochs = 15  # 每个更新步骤中PPO的循环次数
     batch_size = 24
     num_transformer_blocks = 1
     num_heads = 2

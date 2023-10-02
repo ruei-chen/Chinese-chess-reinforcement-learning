@@ -20,6 +20,7 @@ class Chessboard():
         # 初始化棋盘
         # 黑棋
         # x为横坐标,y为纵坐标,图像的左上角为坐标原点
+
         self.chessboard[0][3] = Bing(0, 3, red = False) 
         self.chessboard[2][3] = Bing(2, 3, red = False) 
         self.chessboard[4][3] = Bing(4, 3, red = False) 
@@ -37,7 +38,7 @@ class Chessboard():
         self.chessboard[5][0] = Shi(5, 0, red = False) 
         self.chessboard[4][0] = Shuai(4, 0, red = False) 
 
-        # 红棋
+        # # 红棋
         self.chessboard[0][6] = Bing(0, 6) 
         self.chessboard[2][6] = Bing(2, 6) 
         self.chessboard[4][6] = Bing(4, 6) 

@@ -1,5 +1,6 @@
 import os
 import torch
+from PPO import PolicyNetwork as PO , ValueNetwork as VA ,Buffer as BU , stateoripos as stori, preprocess_state as prestate , convert_action as conv ,nextstate as nex , justmove as ju ,mark as mak,markingupdate as maupgrade
 from PPOTransformer import PolicyNetwork , ValueNetwork , Buffer , stateoripos ,  preprocess_state , convert_action , nextstate , justmove , mark as ma , markingupdate
 from DQN import DQN , preprocess_state as pre , Buffer as B , combine , nextstate as nstate , validaction , get_move , justmove as jmove , stateoripos as stateori , mark
 from torch.distributions import Categorical
@@ -26,7 +27,14 @@ value_net = ValueNetwork(90 * 4, 4, 512, 1, 2)
 policy_net.load_state_dict(torch.load('ppo_training_results/policy_Transformer_net.pth'))
 value_net.load_state_dict(torch.load('ppo_training_results/value_Transformer_net.pth'))
 
+pnet = PO(90 * 4, 4, 187, 512, 1, 2)
+vnet = VA(90 * 4, 4, 512, 1, 2)
+
+pnet.load_state_dict(torch.load('ppo_training_results/policy_net.pth'))
+vnet.load_state_dict(torch.load('ppo_training_results/value_net.pth'))
+
 dqn_agent = DQN(90*4, 187, 192, 0.001, 0.99, 0.99)
+dqn_agentoo = DQN(90*4, 187, 192, 0.001, 0.99, 0.99)
 
 # 載入已經儲存的模型狀態
 saved_model_path = 'DQNmodel.pth'
@@ -34,12 +42,21 @@ checkpoint = torch.load(saved_model_path)
 dqn_agent.q_network.load_state_dict(checkpoint['model_state_dict'])
 dqn_agent.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
+saved_model_path = 'DQNorimodel.pth'
+checkpoint = torch.load(saved_model_path)
+dqn_agentoo.q_network.load_state_dict(checkpoint['model_state_dict'])
+dqn_agentoo.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
 # 設置為評估模式
 dqn_agent.q_network.eval()
+dqn_agentoo.q_network.eval()
 
 # 設置為評估模式
 policy_net.eval()
 value_net.eval()
+
+pnet.eval()
+vnet.eval()
 
 red_win_count = 0
 black_win_count = 0
@@ -119,11 +136,11 @@ def mouse_pos(position):
     ey = y // 80
     return ex,ey
 
-def chess_main():
+def chess_mainai(): # 黑 ori 紅 dqn
     pygame.init()
-    load_sound()
-    pygame.mixer.music.set_volume(0.2)  # 设置音量大小，可根据需要调整
-    pygame.mixer.music.play(-1)  # -1表示无限循环播放
+    # load_sound()
+    # pygame.mixer.music.set_volume(0.2)  # 设置音量大小，可根据需要调整
+    # pygame.mixer.music.play(-1)  # -1表示无限循环播放
 
     screen = pygame.display.set_mode((720,800))
     pygame.display.set_caption('chess')
@@ -152,138 +169,6 @@ def chess_main():
                 temp = Piece(y.picture(), y.position())
                 chesses.add((temp,))
 
-    red_box_pos = None
-    box_width = 80
-    box_height = 80
-    going = True
-    freq = 0
-    # 一会要测试一下这里
-    global start_pos
-    global end_pos
-    global red_win_count
-    global black_win_count
-
-    start_pos = end_pos = (-1,-1)
-    while going:
-        clock.tick(10)
-
-        for event in pygame.event.get():
-            if event.type == QUIT:
-                going = False
-            elif event.type == KEYDOWN and event.key == K_ESCAPE:
-                going = False
-            elif event.type == KEYDOWN:
-                if event.key == pygame.K_s:
-                    chess.save()
-            elif event.type == MOUSEBUTTONDOWN:
-                # 鼠标按下 記的position 怪
-                pos = pygame.mouse.get_pos()
-                end_pos = mouse_pos(pos)
-                box_x = (end_pos[0] * 80 + 40) - box_width // 2
-                box_y = (end_pos[1] * 80 + 40) - box_height // 2
-                red_box_pos = (box_x, box_y)
-                valid = chess.get_valid_moves()
-                print(valid)
-                # 沒步可走時
-                if len(valid) == 0:
-                    if show_arrow_down:
-                        chess.black_win_count = 1
-                    if not show_arrow_down:
-                        chess.red_win_count = 1
-
-                if chess.move(start_pos,end_pos):
-                    for spr in chesses:
-                        if spr.position == end_pos:
-                            spr.kill()
-                        if spr.position == start_pos:
-                            spr.move(end_pos)
-                    end_pos = start_pos = (-1,-1)
-                    show_arrow_down = not show_arrow_down  # 切换显示状态
-                    freq = freq + 1
-                elif start_pos == (-1,-1):
-                    start_pos = end_pos
-                else:
-                    end_pos = start_pos = (-1,-1)
-                
-                if start_pos == (-1, -1) and end_pos == (-1, -1):
-                    if chess.red_win_count > 0 or chess.black_win_count > 0:
-                        if chess.red_win_count > 0:
-                            object = "red wins"
-                        if chess.black_win_count > 0:
-                            object = "black wins"
-                        red_win_count = red_win_count + chess.get_red_win_count()
-                        black_win_count = black_win_count + chess.get_black_win_count()
-                        print("Red wins:", red_win_count)
-                        print("Black wins:", black_win_count)
-                        going = False
-                        end_screen(object,red_win_count,black_win_count)  # 重新开始游戏
-                        pygame.quit()
-        if freq > 250:
-            object = "It's tie!"
-            going = False
-            end_screen(object,red_win_count,black_win_count)  # 重新开始游戏
-            pygame.quit()
-
-        if going:
-            board.draw(screen)
-            chesses.draw(screen)
-
-            if red_box_pos:
-                for spr in chesses:
-                    if spr.position == end_pos:
-                        pygame.draw.rect(screen, (255, 0, 0), (red_box_pos[0], red_box_pos[1], box_width, box_height), 2)
-                else:
-                    pass
-
-            if show_arrow_down:
-                Arrowdown.rect.x = 0
-                Arrowup.rect.x = -1000
-                Arrows.draw(screen)  # 显示箭头下
-            else:
-                Arrowdown.rect.x = -1000
-                Arrowup.rect.x = 0
-                Arrows.draw(screen)  # 显示箭头上
-
-            pygame.display.flip()
-
-    pygame.quit()
-
-def chess_mainai():
-    pygame.init()
-    load_sound()
-    pygame.mixer.music.set_volume(0.2)  # 设置音量大小，可根据需要调整
-    pygame.mixer.music.play(-1)  # -1表示无限循环播放
-
-    screen = pygame.display.set_mode((720,800))
-    pygame.display.set_caption('chess')
-
-    clock = pygame.time.Clock()
-
-    chessboard = ChessBoard()
-    Arrowdown = arrowdown(0,380)
-    Arrowup = arrowup(0,380)
-
-    # init group
-    Arrows = pygame.sprite.Group()
-    board = pygame.sprite.Group()
-    chesses = pygame.sprite.Group()
-
-    board.add((chessboard, ))
-    Arrows.add((Arrowdown, ))
-    Arrows.add((Arrowup, ))
-    show_arrow_down = True  # 初始显示箭头下
-    clock = pygame.time.Clock()
-    # add chess
-    chess = Chessboard()
-    for i in chess.chessboard:
-        for y in i:
-            if not y == 0:
-                temp = Piece(y.picture(), y.position())
-                chesses.add((temp,))
-
-    red_box_pos = None
-    box_width = 80
-    box_height = 80
     going = True
     freq = 0
     # 一会要测试一下这里
@@ -292,36 +177,59 @@ def chess_mainai():
     global red_win_count
     global black_win_count
     temparray =[]
-    buffer = Buffer()
-
-    marking = ma(chess)
+    temparray1 = []
+    buffer = B()
+    buffer1 = B()
 
     start_pos = end_pos = (-1,-1)
+
+    marking = mark(chess)
+    markings = mark(chess)
+    
     while going:
         clock.tick(10)
 
         if not show_arrow_down:
-            pygame.time.delay(1000)
-            state = preprocess_state(chess)
+            Arrowdown.rect.x = -1000
+            Arrowup.rect.x = 0
+            Arrows.draw(screen)  # 显示箭头上
+            pygame.display.flip()
+
+        if not show_arrow_down:
+            state = pre(chess)
             poses = buffer.sampling()
             if len(poses) > 0:
-                state = stateoripos(poses, state)
-            state = torch.tensor(state, dtype=torch.float32)
-            # state = state.view(-1)
-            action_probs = policy_net(state)
-            action_dist = Categorical(action_probs)
-            action_str, ori_position, done, selected_indexes = convert_action(action_probs, chess, marking)
-            next_state, reward, done, actions, ori, action =  nextstate(action_str, ori_position, chess, temparray, selected_indexes)
-            start_pos = ori
-            end_pos = actions
-            if start_pos ==  None and end_pos == None:
+                state = stateori(poses, state)
+            valid_moves = chess.get_valid_moves()
+            # if len(valid_moves) == 0:
+            #     done = True
+            #     break
+            print(valid_moves)
+
+            if len(valid_moves.keys()) > 0:
+                valid_moves = combine(valid_moves, markings)
+                valid_actions, str_poses, end_poses = validaction(valid_moves, chess)
+
+                actions = dqn_agentoo.select_action(state, valid_actions)
+                origin, action = get_move(actions, str_poses, end_poses, valid_actions)
+
+                buffer.addin(origin,action)
+
+                start_pos = origin
+                end_pos = action
+                if start_pos ==  None and end_pos == None:
+                    start_pos = (-1, -1)
+                    end_pos = (-1, -1)
+            else:
                 start_pos = (-1, -1)
                 end_pos = (-1, -1)
-                chess.red_win_count = 1
+                chess.black_win_count = 1
 
-            if chess.move(start_pos,end_pos):
-                print(start_pos,end_pos)
-                marking = markingupdate(end_pos, start_pos, marking)
+            
+            if chess.judgemove(start_pos,end_pos):
+                # 執行遊戲行動，並取得下一個遊戲狀態、獎勵和結束標誌
+                reward, done, markings = nstate(end_pos, start_pos, chess, markings, temparray) 
+                print(start_pos,end_pos,"DQN")
                 for spr in chesses:
                     if spr.position == end_pos:
                         spr.kill()
@@ -330,14 +238,14 @@ def chess_mainai():
                 end_pos = start_pos = (-1,-1)
                 show_arrow_down = not show_arrow_down  # 切换显示状态
                 freq = freq + 1
-                temparray = justmove(actions, chess, temparray)
+                temparray = jmove(action, chess, temparray)
             elif start_pos == (-1,-1):
                 start_pos = end_pos
             else:
                 end_pos = start_pos = (-1,-1)
 
             if start_pos == (-1, -1) and end_pos == (-1, -1):
-                if len(action_str) == 0:
+                if len(valid_moves) == 0:
                     if chess.red_win_count > 0:
                         red_win_count = red_win_count + chess.get_red_win_count()
                         object = "red wins"
@@ -347,56 +255,72 @@ def chess_mainai():
                         pygame.quit()
 
         if show_arrow_down:
-            for event in pygame.event.get():
-                if event.type == QUIT:
-                    going = False
-                elif event.type == KEYDOWN and event.key == K_ESCAPE:
-                    going = False
-                elif event.type == KEYDOWN:
-                    if event.key == pygame.K_s:
-                        chess.save()
-                elif event.type == MOUSEBUTTONDOWN:
-                    # 鼠标按下 記的position 怪
-                    pos = pygame.mouse.get_pos()
-                    end_pos = mouse_pos(pos)
-                    box_x = (end_pos[0] * 80 + 40) - box_width // 2
-                    box_y = (end_pos[1] * 80 + 40) - box_height // 2
-                    red_box_pos = (box_x, box_y)
-                    valid = chess.get_valid_moves()
-                    print(valid)
-                    if len(valid) == 0:
-                        chess.black_win_count = 1
+            Arrowdown.rect.x = 0
+            Arrowup.rect.x = -1000
+            Arrows.draw(screen)  # 显示箭头下
+            pygame.display.flip()
 
-                    if chess.move(start_pos,end_pos):
-                        print(start_pos,end_pos)
-                        for spr in chesses:
-                            if spr.position == end_pos:
-                                spr.kill()
-                            if spr.position == start_pos:
-                                spr.move(end_pos)
-                        end_pos = start_pos = (-1,-1)
-                        show_arrow_down = not show_arrow_down  # 切换显示状态
-                        freq = freq + 1
-                        # temparray = justmove(end_pos, chess, temparray)
-                    elif start_pos == (-1,-1):
-                        start_pos = end_pos
-                    else:
-                        end_pos = start_pos = (-1,-1)
-                    
-                    if start_pos == (-1, -1) and end_pos == (-1, -1):
-                        if chess.red_win_count > 0 or chess.black_win_count > 0:
-                            if chess.red_win_count > 0:
-                                object = "red wins"
-                            if chess.black_win_count > 0:
-                                object = "black wins"
-                            red_win_count = red_win_count + chess.get_red_win_count()
-                            black_win_count = black_win_count + chess.get_black_win_count()
-                            print("Red wins:", red_win_count)
-                            print("Black wins:", black_win_count)
-                            going = False
-                            end_screen(object,red_win_count,black_win_count)  # 重新开始游戏
-                            pygame.quit()
-        if freq > 250:
+        if show_arrow_down:
+            state = pre(chess)
+            poses = buffer1.sampling()
+            if len(poses) > 0:
+                state = stateori(poses, state)
+            valid_moves = chess.get_valid_moves()
+            # if len(valid_moves) == 0:
+            #     done = True
+            #     break
+            print(valid_moves)
+
+            if len(valid_moves.keys()) > 0:
+                valid_moves = combine(valid_moves, marking)
+                valid_actions, str_poses, end_poses = validaction(valid_moves, chess)
+
+                actions = dqn_agent.select_action(state, valid_actions)
+                origin, action = get_move(actions, str_poses, end_poses, valid_actions)
+
+                buffer1.addin(origin,action)
+
+                start_pos = origin
+                end_pos = action
+                if start_pos ==  None and end_pos == None:
+                    start_pos = (-1, -1)
+                    end_pos = (-1, -1)
+            else:
+                start_pos = (-1, -1)
+                end_pos = (-1, -1)
+                chess.black_win_count = 1
+
+            
+            if chess.judgemove(start_pos,end_pos):
+                # 執行遊戲行動，並取得下一個遊戲狀態、獎勵和結束標誌
+                reward, done, marking = nstate(end_pos, start_pos, chess, marking, temparray1) 
+                print(start_pos,end_pos,"DQN")
+                for spr in chesses:
+                    if spr.position == end_pos:
+                        spr.kill()
+                    if spr.position == start_pos:
+                        spr.move(end_pos)
+                end_pos = start_pos = (-1,-1)
+                show_arrow_down = not show_arrow_down  # 切换显示状态
+                freq = freq + 1
+                temparray1 = jmove(action, chess, temparray1)
+            elif start_pos == (-1,-1):
+                start_pos = end_pos
+            else:
+                end_pos = start_pos = (-1,-1)
+
+            if start_pos == (-1, -1) and end_pos == (-1, -1):
+                if len(valid_moves) == 0:
+                    if chess.black_win_count > 0:
+                        print("挖屋")
+                        # pygame.time.delay(10000)
+                        black_win_count = black_win_count + chess.get_black_win_count()
+                        object = "black wins"
+                        print("black wins:", black_win_count)
+                        going = False
+                        end_screen(object,red_win_count,black_win_count)  # 重新开始游戏
+                        pygame.quit()
+        if freq > 400:
             object = "It's tie!"
             going = False
             end_screen(object,red_win_count,black_win_count)  # 重新开始游戏
@@ -406,27 +330,11 @@ def chess_mainai():
             board.draw(screen)
             chesses.draw(screen)
 
-            if red_box_pos:
-                for spr in chesses:
-                    if spr.position == end_pos:
-                        pygame.draw.rect(screen, (255, 0, 0), (red_box_pos[0], red_box_pos[1], box_width, box_height), 2)
-                else:
-                    pass
-
-            if show_arrow_down:
-                Arrowdown.rect.x = 0
-                Arrowup.rect.x = -1000
-                Arrows.draw(screen)  # 显示箭头下
-            else:
-                Arrowdown.rect.x = -1000
-                Arrowup.rect.x = 0
-                Arrows.draw(screen)  # 显示箭头上
-
             pygame.display.flip()
 
     pygame.quit()
 
-def chess_mainaiai():
+def chess_mainaiai(): # 黑 transformer 紅 ppo
     pygame.init()
     # load_sound()
     # pygame.mixer.music.set_volume(0.2)  # 设置音量大小，可根据需要调整
@@ -469,11 +377,11 @@ def chess_mainaiai():
     temparray =[]
     temparray1 = []
     buffer = Buffer()
-    buffer1 = B()
+    buffer1 = BU()
 
     start_pos = end_pos = (-1,-1)
 
-    marking = mark(chess)
+    marking = mak(chess)
     markings = ma(chess)
     
     while going:
@@ -530,7 +438,7 @@ def chess_mainaiai():
                         going = False
                         end_screen(object,red_win_count,black_win_count)  # 重新开始游戏
                         pygame.quit()
-
+# from PPO import PolicyNetwork as PO , ValueNetwork as VA ,Buffer as BU , stateoripos as stori, preprocess_state as prestate , convert_action as conv ,nextstate as nex , justmove as ju ,mark as mak,markingupdate as maupgrade
 
         if show_arrow_down:
             Arrowdown.rect.x = 0
@@ -539,41 +447,27 @@ def chess_mainaiai():
             pygame.display.flip()
 
         if show_arrow_down:
-            state = pre(chess)
+            state = prestate(chess)
             poses = buffer1.sampling()
             if len(poses) > 0:
-                state = stateori(poses, state)
-            valid_moves = chess.get_valid_moves()
-            # if len(valid_moves) == 0:
-            #     done = True
-            #     break
-            print(valid_moves)
-
-            if len(valid_moves.keys()) > 0:
-                valid_moves = combine(valid_moves, marking)
-                valid_actions, str_poses, end_poses = validaction(valid_moves, chess)
-
-                actions = dqn_agent.select_action(state, valid_actions)
-                origin, action = get_move(actions, str_poses, end_poses, valid_actions)
-
-                buffer1.addin(origin,action)
-
-                start_pos = origin
-                end_pos = action
-                if start_pos ==  None and end_pos == None:
-                    start_pos = (-1, -1)
-                    end_pos = (-1, -1)
-            else:
+                state = stori(poses, state)
+            state = torch.tensor(state, dtype=torch.float32)
+            # state = state.view(-1)
+            action_probs = pnet(state)
+            action_dist = Categorical(action_probs)
+            action_str, ori_position, done, selected_indexes = conv(action_probs, chess, marking)
+            next_state, reward, done, actions, ori, action =  nex(action_str, ori_position, chess, temparray1, selected_indexes)
+            start_pos = ori
+            end_pos = actions
+            if start_pos ==  None and end_pos == None:
                 start_pos = (-1, -1)
                 end_pos = (-1, -1)
-                chess.black_win_count = 1
+                chess.red_win_count = 1
 
-            
-            if chess.judgemove(start_pos,end_pos):
-                # 執行遊戲行動，並取得下一個遊戲狀態、獎勵和結束標誌
-                reward, done, marking = nstate(end_pos, start_pos, chess, marking, temparray1) 
-                print(start_pos,end_pos,"DQN")
-                pygame.time.delay(200)
+            if chess.move(start_pos,end_pos):
+                print(start_pos,end_pos, "PPO ori")
+                marking = maupgrade(end_pos, start_pos, marking)
+                # pygame.time.delay(200)
                 for spr in chesses:
                     if spr.position == end_pos:
                         spr.kill()
@@ -582,23 +476,22 @@ def chess_mainaiai():
                 end_pos = start_pos = (-1,-1)
                 show_arrow_down = not show_arrow_down  # 切换显示状态
                 freq = freq + 1
-                temparray1 = jmove(action, chess, temparray1)
+                temparray1 = ju(actions, chess, temparray1)
             elif start_pos == (-1,-1):
                 start_pos = end_pos
             else:
                 end_pos = start_pos = (-1,-1)
 
             if start_pos == (-1, -1) and end_pos == (-1, -1):
-                if len(valid_moves) == 0:
+                if len(action_str) == 0:
                     if chess.black_win_count > 0:
-                        print("挖屋")
-                        pygame.time.delay(10000)
                         black_win_count = black_win_count + chess.get_black_win_count()
                         object = "black wins"
                         print("black wins:", black_win_count)
                         going = False
                         end_screen(object,red_win_count,black_win_count)  # 重新开始游戏
                         pygame.quit()
+
         if freq > 250:
             object = "It's tie!"
             going = False
@@ -629,9 +522,9 @@ def start_screen(red_win_count,black_win_count):
     number2 = font1.render(string2, True, (255, 255, 255))
     number_rect1 = number1.get_rect(center=(70, 710))
     number_rect2 = number2.get_rect(center=(70, 750))
-    text1 = font.render("h vs h", True, (255, 255, 255))
-    text2 = font.render("h vs h", True, (0, 0, 0))
-    text2.set_alpha(0)
+    # text1 = font.render("h vs h", True, (255, 255, 255))
+    # text2 = font.render("h vs h", True, (0, 0, 0))
+    # text2.set_alpha(0)
     text3 = font.render("h vs AI", True, (255, 255, 255))
     text4 = font.render("h vs AI", True, (0, 0, 0))
     text4.set_alpha(0)
@@ -640,7 +533,7 @@ def start_screen(red_win_count,black_win_count):
     text6.set_alpha(0)
     current_text2 = text5
     current_text1 = text4
-    current_text = text1  # 当前显示的文本
+    # current_text = text1  # 当前显示的文本
     blink_timer = 0  # 闪烁计时器
     blink_interval = 500  # 闪烁间隔（毫秒）
 
@@ -654,11 +547,11 @@ def start_screen(red_win_count,black_win_count):
             if event.type == QUIT:
                 running = False
             elif event.type == MOUSEBUTTONDOWN:
-                if event.button == 1:  # 检查鼠标左键点击
-                    if text_rect.collidepoint(event.pos):  # 点击按钮
-                        running = False  # 结束开始界面，进入游戏主循环
-                        chess_main()
-                        pygame.quit()
+                # if event.button == 1:  # 检查鼠标左键点击
+                #     if text_rect.collidepoint(event.pos):  # 点击按钮
+                #         running = False  # 结束开始界面，进入游戏主循环
+                #         chess_main()
+                #         pygame.quit()
                 if event.button == 1:  # 检查鼠标左键点击
                     if text_rect1.collidepoint(event.pos):  # 点击按钮
                         running = False  # 结束开始界面，进入游戏主循环
@@ -674,20 +567,20 @@ def start_screen(red_win_count,black_win_count):
             if blink_timer >= blink_interval:
                 blink_timer = 0  # 重置计时器
                 # 交替改变颜色
-                if current_text == text1:
+                if current_text1 == text4:
                     current_text2 = text6
                     current_text1 = text3
-                    current_text = text2
+                    # current_text = text2
                 else:
                     current_text2 = text5
                     current_text1 = text4
-                    current_text = text1
+                    # current_text = text1
 
             screen.blit(background_image, (0, 0))
-            text_rect = current_text.get_rect(center=(360, 600))
+            # text_rect = current_text.get_rect(center=(360, 600))
             text_rect1 = current_text1.get_rect(center=(360,520))
             text_rect2 = current_text2.get_rect(center=(360,440))
-            screen.blit(current_text, text_rect)
+            # screen.blit(current_text, text_rect)
             screen.blit(current_text1, text_rect1)
             screen.blit(current_text2, text_rect2)
 
@@ -720,7 +613,7 @@ def end_screen(object,red_win_count,black_win_count):
             text_rect = text.get_rect(center=(360, 200))
             screen.blit(text, text_rect)
             pygame.display.flip()
-            pygame.time.delay(2000)  # 延迟50豪秒
+            # pygame.time.delay(2000)  # 延迟50豪秒
         running = False  # 结束开始界面，进入游戏主循环
         start_screen(red_win_count,black_win_count)
         pygame.quit()
@@ -729,9 +622,3 @@ def end_screen(object,red_win_count,black_win_count):
 
 if __name__ == '__main__':
     start_screen(red_win_count,black_win_count)
-
-
-    # https://github.com/suragnair/alpha-zero-general
-    # https://github.com/gavindst/chess
-    # https://github.com/mm12432/MyChess
-    # https://github.com/PacktPublishing/Reinforcement-Learning-Algorithms-with-Python/blob/master/Chapter05/DQN_Atari.py
